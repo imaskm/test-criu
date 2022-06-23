@@ -3,8 +3,14 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
 	"github.com/containerd/containerd"
+	refdocker "github.com/containerd/containerd/reference/docker"
+	"github.com/containerd/nerdctl/pkg/imgutil/commit"
+	"github.com/containerd/nerdctl/pkg/imgutil/dockerconfigresolver"
+	"github.com/containerd/nerdctl/pkg/imgutil/push"
+	"github.com/containerd/nerdctl/pkg/platformutil"
 )
 
 func main() {
@@ -17,6 +23,8 @@ func main() {
 		log.Fatal(err)
 	}
 	defer client.Close()
+
+	// client.SnapshotService("").
 
 	// image, err := client.Pull(context.Background(), "docker.io/library/nginx:latest", containerd.WithPullUnpack)
 
@@ -63,7 +71,7 @@ func main() {
 
 	// log.Println(status)
 
-	conts, err := client.Containers(context.Background(), "id==foo")
+	conts, err := client.Containers(context.Background(), "id==foo3")
 	if err != nil {
 		log.Fatal("containerError: ", err)
 	}
@@ -72,24 +80,77 @@ func main() {
 
 	log.Println(cont.ID())
 
-	t, err := cont.Task(context.Background(), nil)
+	img := "docker.io/imaskm/testcommit:v3"
+
+	digest, err := commit.Commit(context.Background(), client, cont, &commit.Opts{
+		Pause: false,
+		Ref:   img,
+	})
 
 	if err != nil {
-		log.Fatal("taskError: ", err)
+		log.Fatal("digestErrors: ", err)
 	}
 
-	chk, err := t.Checkpoint(context.Background())
+	log.Println(digest)
+
+	platMC, err := platformutil.NewMatchComparer(true, []string{})
+	if err != nil {
+		log.Fatal("MatchErr: ", err)
+	}
+
+	named, err := refdocker.ParseDockerRef(img)
+	if err != nil {
+		log.Fatal(err)
+	}
+	ref := named.String()
+	refDomain := refdocker.Domain(named)
+
+	reg := os.Getenv("REGISTRY")
+	if reg == "" {
+		reg = "docker.io"
+	}
+
+	username := os.Getenv("DOCKER_USERNAME")
+	password := os.Getenv("DOCKER_PASSWORD")
+
+	// var credFunc dockerconfigresolver.AuthCreds
+
+	credFunc := func(registry string) (string, string, error) {
+		return username, password, nil
+	}
 
 	if err != nil {
-		log.Fatal("checkpointErr: ", err)
+		log.Fatal("authErr: ", err)
 	}
 
-	log.Println(chk)
+	resolver, err := dockerconfigresolver.New(context.Background(), refDomain, dockerconfigresolver.WithAuthCreds(credFunc))
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	err = client.Push(context.Background(), "docker.io/imaskm/criu:v1", chk.Target())
+	err = push.Push(context.Background(), client, resolver, os.Stdout, ref, ref, platMC, false)
+
 	if err != nil {
 		log.Fatal("pushError: ", err)
 	}
+	// t, err := cont.Task(context.Background(), nil)
+
+	// if err != nil {
+	// 	log.Fatal("taskError: ", err)
+	// }
+
+	// chk, err := t.Checkpoint(context.Background())
+
+	// if err != nil {
+	// 	log.Fatal("checkpointErr: ", err)
+	// }
+
+	// log.Println(chk)
+
+	// err = client.Push(context.Background(), "docker.io/imaskm/criu:v1", chk.Target())
+	// if err != nil {
+	// 	log.Fatal("pushError: ", err)
+	// }
 
 	// client.TaskService().Checkpoint(context.Background(),
 	// 	&tasks.CheckpointTaskRequest{
